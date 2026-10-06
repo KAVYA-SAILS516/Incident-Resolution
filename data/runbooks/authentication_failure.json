@@ -1,0 +1,14 @@
+{
+  "runbook_id": "RB-AUTHENTICATION-FAILURE",
+  "error_type": "AUTHENTICATION_FAILURE",
+  "title": "Authentication failures (HTTP 401)",
+  "simulated": true,
+  "symptoms": ["HTTP 401 responses", "'Invalid or expired credentials' messages"],
+  "steps": [
+    {"title": "Check whether failures come from a few clients", "description": "Group the failures by client_id; a few clients suggests bad credentials or credential stuffing, many suggests a platform issue.", "risk": "LOW"},
+    {"title": "Verify the identity provider and token signing keys", "description": "Check identity-provider health and whether signing keys or certificates rotated recently.", "risk": "LOW"},
+    {"title": "Check clock skew between services", "description": "Token validation fails when host clocks drift; compare NTP status on affected hosts.", "risk": "LOW"},
+    {"title": "Temporarily block or throttle abusive clients", "description": "If a small set of clients produces most failures, rate-limit or block them.", "risk": "MEDIUM"}
+  ],
+  "escalation": "Security on-call if a credential-stuffing pattern is suspected."
+}

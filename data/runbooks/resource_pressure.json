@@ -1,0 +1,14 @@
+{
+  "runbook_id": "RB-RESOURCE-PRESSURE",
+  "error_type": "RESOURCE_PRESSURE",
+  "title": "Host disk or memory pressure",
+  "simulated": true,
+  "symptoms": ["HTTP 503 responses", "'Host disk or memory threshold exceeded' messages", "Errors concentrated on specific hosts"],
+  "steps": [
+    {"title": "Identify the hosts under pressure", "description": "Check disk and memory usage on the hosts named in the errors and compare with healthy hosts.", "risk": "LOW"},
+    {"title": "Free disk space by rotating or clearing old logs and temp files", "description": "Remove rotated logs, core dumps and temp files on the affected hosts.", "risk": "MEDIUM"},
+    {"title": "Drain and restart the affected host", "description": "Remove the host from the load balancer, restart the service, then re-add it.", "risk": "MEDIUM"},
+    {"title": "Scale out the service", "description": "Add capacity so load is spread away from constrained hosts.", "risk": "MEDIUM"}
+  ],
+  "escalation": "Platform on-call if more than one host is affected."
+}

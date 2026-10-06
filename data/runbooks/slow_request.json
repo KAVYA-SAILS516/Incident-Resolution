@@ -1,0 +1,14 @@
+{
+  "runbook_id": "RB-SLOW-REQUEST",
+  "error_type": "SLOW_REQUEST",
+  "title": "Request latency above the warning threshold",
+  "simulated": true,
+  "symptoms": ["WARNING logs with 'Request latency exceeded warning threshold'", "Requests succeed (HTTP 200) but slowly"],
+  "steps": [
+    {"title": "Compare latency with the normal baseline", "description": "Compare p50/p95 response times of the slow requests with normal requests for the same service and endpoint.", "risk": "LOW"},
+    {"title": "Check for correlated errors in the same window", "description": "Slow requests during error spikes often share a cause with timeouts or resource pressure.", "risk": "LOW"},
+    {"title": "Check host and dependency saturation", "description": "Review CPU, memory and downstream latency for the hosts serving the slow requests.", "risk": "LOW"},
+    {"title": "Scale out the service", "description": "Add capacity if slowness tracks load.", "risk": "MEDIUM"}
+  ],
+  "escalation": "Owning team if p95 latency stays above threshold for 30 minutes."
+}

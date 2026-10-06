@@ -1,0 +1,14 @@
+{
+  "runbook_id": "RB-RATE-LIMIT-EXCEEDED",
+  "error_type": "RATE_LIMIT_EXCEEDED",
+  "title": "Client request limits exceeded (HTTP 429)",
+  "simulated": true,
+  "symptoms": ["HTTP 429 responses", "'Client request limit exceeded' messages"],
+  "steps": [
+    {"title": "Identify the clients hitting the limit", "description": "Group the 429s by client_id and compare their request volume with normal traffic.", "risk": "LOW"},
+    {"title": "Check whether retries are amplifying traffic", "description": "Look for clients retrying failed requests without backoff during the error window.", "risk": "LOW"},
+    {"title": "Contact the client or apply a per-client limit", "description": "Ask the heavy client to reduce traffic, or apply a stricter per-client quota.", "risk": "MEDIUM"},
+    {"title": "Temporarily raise the rate limit", "description": "Raise the limit only if the traffic is legitimate and the backend has capacity.", "risk": "MEDIUM"}
+  ],
+  "escalation": "API platform team if limits need to change."
+}

@@ -1,0 +1,14 @@
+{
+  "runbook_id": "RB-INTERNAL-SERVER-ERROR",
+  "error_type": "INTERNAL_SERVER_ERROR",
+  "title": "Unhandled application exceptions (HTTP 500)",
+  "simulated": true,
+  "symptoms": ["HTTP 500 responses", "'Unhandled application exception' messages"],
+  "steps": [
+    {"title": "Collect stack traces for the failing requests", "description": "Use the request_ids from the incident to find full exception traces in application logs or APM.", "risk": "LOW"},
+    {"title": "Check for a recent deployment or configuration change", "description": "Compare the incident start time with the deployment and config-change history of the service.", "risk": "LOW"},
+    {"title": "Check downstream dependencies", "description": "Verify that the databases and services this endpoint calls are healthy.", "risk": "LOW"},
+    {"title": "Roll back the most recent deployment", "description": "If a release lines up with the first error, roll back to the previous version.", "risk": "HIGH"}
+  ],
+  "escalation": "Owning team on-call; release manager if a rollback is considered."
+}

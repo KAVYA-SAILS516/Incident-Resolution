@@ -1,0 +1,14 @@
+{
+  "runbook_id": "RB-DATABASE-TIMEOUT",
+  "error_type": "DATABASE_TIMEOUT",
+  "title": "Database connection timeouts",
+  "simulated": true,
+  "symptoms": ["HTTP 503 responses", "'Database connection timed out' messages", "High response times"],
+  "steps": [
+    {"title": "Check database connection pool saturation", "description": "Compare active vs maximum pool connections for the affected service and look for connection wait queues.", "risk": "LOW"},
+    {"title": "Check database health and slow queries", "description": "Review database CPU, locks and the slow-query log for the incident window.", "risk": "LOW"},
+    {"title": "Increase connection pool size or timeout temporarily", "description": "Raise the pool limit or acquisition timeout within database capacity; revert after the incident.", "risk": "MEDIUM"},
+    {"title": "Fail over to a healthy database replica", "description": "Promote or route traffic to a healthy replica if the primary is degraded.", "risk": "HIGH"}
+  ],
+  "escalation": "Database on-call if timeouts persist for more than 15 minutes or affect payments."
+}
