@@ -1,0 +1,14 @@
+# Compose override for the OpenTelemetry Astronomy Shop (does not modify the Shop's own files).
+# The Shop publishes OpenSearch and Jaeger on random host ports; the incident platform expects fixed ones
+# (backend/.env: OTEL_LOGS_URL=http://localhost:9200, OTEL_TRACES_URL=http://localhost:16686/jaeger/ui).
+# Prometheus is already published on 9090 by the Shop.
+#
+# Start (from the Astronomy Shop directory):
+#   docker compose -f compose.yaml -f compose.observability.yaml -f <this file> up --detach --no-build
+services:
+  opensearch:
+    ports:
+      - "9200:9200"
+  jaeger:
+    ports:
+      - "16686:16686"

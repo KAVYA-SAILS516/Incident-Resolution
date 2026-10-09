@@ -17,6 +17,7 @@ class PriorityInputs:
     occurrences: int
     host_count: int
     peak_per_minute: int
+    service_criticality: str | None = None  # from ApplicationKnowledge; None = not known
 
 
 @dataclass(frozen=True)
@@ -64,8 +65,17 @@ def score_priority(inputs: PriorityInputs) -> PriorityResult:
         "burst_rate": (f"peak {inputs.peak_per_minute}/min", _band(inputs.peak_per_minute, rules.PEAK_PER_MINUTE_BANDS)),
     }
 
+    weights = dict(rules.WEIGHTS)
+    if inputs.service_criticality:
+        share = rules.SERVICE_CRITICALITY_WEIGHT
+        weights = {name: weight * (1 - share) for name, weight in weights.items()} | {"service_criticality": share}
+        service_points = rules.CRITICALITY_SCORES.get(inputs.service_criticality, rules.CRITICALITY_SCORES["UNKNOWN"])
+        observed["service_criticality"] = (
+            f"{inputs.service_criticality} ({service_points}/5)", service_points / max(rules.CRITICALITY_SCORES.values())
+        )
+
     factors: list[PriorityFactor] = []
-    for name, weight in rules.WEIGHTS.items():
+    for name, weight in weights.items():
         value, normalized = observed[name]
         factors.append(
             PriorityFactor(name=name, value=value, normalized=round(normalized, 3), weight=weight,
@@ -78,6 +88,21 @@ def score_priority(inputs: PriorityInputs) -> PriorityResult:
     return PriorityResult(priority=priority, score=score, reasons=reasons, factors=factors)
 
 
+def explain(incident: Incident) -> str:
+    """One sentence of the evidence behind the priority (no wording that the data does not support)."""
+    if incident.service_criticality:
+        subject = f"{incident.service} is a {incident.service_criticality.lower()} service"
+        if incident.application:
+            subject += f" of {incident.application}"
+    else:
+        subject = f"{incident.service} serves the {incident.workflow} workflow ({incident.workflow_criticality.lower()} criticality)"
+    parts = [subject, f"{incident.occurrences} {incident.error_type} events (peak {incident.peak_per_minute}/min)"]
+    others = [s for s in incident.affected_services if s != incident.service]
+    if others:
+        parts.append(f"the same traces also failed in {', '.join(others)}")
+    return "; ".join(parts) + f" -> {incident.priority} (score {incident.priority_score:g}/100)."
+
+
 def prioritize(incident: Incident) -> Incident:
     result = score_priority(
         PriorityInputs(
@@ -86,12 +111,14 @@ def prioritize(incident: Incident) -> Incident:
             severity=incident.severity,
             status_code=incident.status_code,
             occurrences=incident.occurrences,
-            host_count=len(incident.hosts),
+            host_count=max(len(incident.hosts), len(incident.affected_services)),
             peak_per_minute=incident.peak_per_minute,
+            service_criticality=incident.service_criticality,
         )
     )
     incident.priority = result.priority
     incident.priority_score = result.score
     incident.priority_reasons = result.reasons
     incident.priority_factors = result.factors
+    incident.priority_reason = explain(incident)
     return incident

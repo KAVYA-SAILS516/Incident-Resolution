@@ -27,6 +27,11 @@ class LogEntry(BaseModel):
     error_type: str | None = None
     message: str | None = None
     raw_message: str  # the original line, unchanged
+    # OpenTelemetry context (None for plain log files).
+    application: str | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
+    attributes: dict = Field(default_factory=dict)
 
     @property
     def is_abnormal(self) -> bool:
@@ -64,4 +69,5 @@ class IngestSummary(BaseModel):
     incidents_detected: int
     below_threshold_groups: int  # error groups too small to open an incident
     failures_sample: list[ParseFailure] = Field(default_factory=list)
+    ignored_services: list[str] = Field(default_factory=list)  # telemetry from services outside the scanned application
     ingested_at: datetime

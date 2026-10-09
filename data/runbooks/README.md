@@ -1,7 +1,8 @@
 # Runbooks (SIMULATED)
 
 These runbooks are **simulated examples written for this POC**. They are not operational procedures from a
-real organisation. There is one per error type that actually appears in `data/logs/sample_application.log`:
+real organisation. They are generic reference runbooks keyed by error type (from the legacy parser/detector test fixture in
+`backend/tests/fixtures/`). They are not tied to the monitored application and match no Astronomy Shop error type:
 
 | File | error_type |
 |---|---|

@@ -102,7 +102,7 @@ export function TicketList({ onOpen, refreshKey, initialFilter }: {
         </div>
 
         {error && <div className="alert alert-danger">{error}</div>}
-        {data && total === 0 && <p className="muted">No incidents match. Process the logs from the dashboard if you have not yet.</p>}
+        {data && total === 0 && <p className="muted">No incidents match. Read the application telemetry from the dashboard if you have not yet.</p>}
         {data && total > 0 && (
           <>
             <div className="table-wrap">

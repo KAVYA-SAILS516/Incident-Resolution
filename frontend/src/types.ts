@@ -48,7 +48,22 @@ export interface Incident {
   priority_score: number;
   priority_reasons: string[];
   priority_factors: PriorityFactor[];
+  priority_reason?: string;
+  // Application context (set when an application has been scanned and the service is known).
+  application?: string | null;
+  service_criticality?: string | null;
+  affected_services?: string[];
+  trace_ids?: string[];
+  correlated_incidents?: CorrelatedIncident[];
   analysis: IncidentAnalysis;
+}
+
+export interface CorrelatedIncident {
+  incident_id: string;
+  service: string;
+  shared_traces: number;
+  relation: "dependency" | "dependent" | "same_trace";
+  basis?: "trace" | "time+dependency";
 }
 
 export interface IncidentList {
@@ -93,6 +108,25 @@ export interface Evidence {
   representative_logs: LogLine[];
   runbook: { available: boolean; runbook_id: string | null };
   data_limits: { log_lines_in_incident: number; log_lines_shared_with_ai: number; not_in_logs: string[] };
+  application_context?: ServiceContext | null;
+  correlation?: { trace_ids: string[]; affected_services: string[]; correlated_incidents: CorrelatedIncident[]; dependency_contexts: ServiceContext[] };
+  telemetry?: {
+    traces: { trace_id: string; span_count: number; services: string[]; error_spans: { service: string | null; operation: string; duration_ms: number }[] }[];
+    service_metrics: { window_seconds: number; requests: number; errors: number; error_ratio: number } | null;
+  };
+}
+
+export interface ServiceContext {
+  application: string;
+  service: string;
+  purpose: string;
+  criticality: string;
+  criticality_source: string | null;
+  depends_on: string[];
+  depended_on_by: string[];
+  apis: string[];
+  documentation: string[];
+  documented_failure_scenarios: { name: string; description: string | null; default_variant: string | null }[];
 }
 
 export interface EvidenceItem {
@@ -110,6 +144,7 @@ export interface Investigation {
   unknowns: string[];
   insufficient_evidence: boolean;
   model: string;
+  provider?: string;
   tools_called: string[];
   based_on_occurrences: number;
   duration_ms: number;
@@ -140,6 +175,104 @@ export interface IncidentDetail {
   evidence: Evidence;
   investigation: Investigation | null;
   recommendations: Recommendations | null;
+  resolution?: Resolution | null;
+}
+
+export type ExecutionMode = "AUTO_EXECUTE" | "HUMAN_APPROVAL" | "HUMAN_TAKEOVER";
+
+export interface ResolutionOption {
+  option_id: string;
+  title?: string;
+  prerequisites?: string[];
+  expected_outcome?: string;
+  action: string;
+  target_service: string;
+  description: string;
+  risk: "LOW" | "MEDIUM" | "HIGH";
+  impact: string;
+  blast_radius: string;
+  blast_radius_level: "LOW" | "MEDIUM" | "HIGH";
+  reversibility: "REVERSIBLE" | "PARTIAL" | "IRREVERSIBLE";
+  confidence: number;
+  execution_mode: ExecutionMode;
+  rationale: string;
+}
+
+export interface Resolution {
+  incident_id: string;
+  options: ResolutionOption[];
+  recommended_option_id: string | null;
+  decision: ExecutionMode;
+  decision_reason: string;
+  state: "proposed" | "executed" | "resolved" | "human_takeover";
+  next_step: string;
+  based_on_investigation: boolean;
+  attempts: { attempt_id: string; option_id: string; mode: string; status: string; approved_by: string | null; detail: string; executed_at: string }[];
+  verifications: { attempt_id: string; status: "SUCCESS" | "FAILED" | "UNKNOWN"; reason: string; checked_at: string }[];
+  failed_options: string[];
+  reasoned_by?: "policy" | "ai+policy";
+  ai_reason?: string | null;
+  validation_notes?: string[];
+}
+
+export interface ServiceInfo {
+  name: string;
+  kind: "application" | "infrastructure";
+  purpose: string | null;
+  criticality: string | null;
+  dependencies: string[];
+  dependents: string[];
+  apis: string[];
+  failure_scenarios: string[];
+}
+
+export interface ApplicationView {
+  scanned: boolean;
+  knowledge: {
+    application_name: string;
+    application_path: string;
+    summary: string | null;
+    services: ServiceInfo[];
+    dependencies: { from: string; to: string }[];
+    apis: { name: string }[];
+    documentation: { path: string; title: string | null }[];
+    telemetry: { signals: Record<string, { receivers: string[]; exporters: string[] }>; collector_configs: string[] };
+    failure_scenarios: { name: string; service: string | null; description: string | null }[];
+    scan_warnings: string[];
+    files_scanned: number;
+    last_scanned_at: string;
+  } | null;
+  telemetry_runtime: { enabled: boolean; collector_endpoint: string | null; logs: boolean; traces: boolean; metrics: boolean };
+  configured_name?: string;
+  configured_path?: string | null;
+  scan_error?: string | null;
+  configuration_issues?: string[];
+  observability?: string;
+  telemetry_health?: ({ enabled: boolean } & Record<"logs" | "metrics" | "traces", { source: string; configured: boolean; reachable: boolean | null; detail: string | null }>) | null;
+  service_health?: { service: string; requests: number; errors: number; error_ratio: number }[];
+  policies: { priority: Priority; minimum_score: number }[];
+}
+
+export interface CaseView {
+  incident_id: string;
+  application: string | null;
+  final_status: string;
+  timeline: { at: string; stage: string; source: string; summary: string }[];
+}
+
+export interface Communication {
+  subject: string;
+  body: string;
+  status: string;
+  generated_by: string;
+}
+
+export interface ActivityEvent {
+  at: string;
+  incident_id: string;
+  stage: string;
+  summary: string;
+  model: string | null;
 }
 
 export interface IngestSummary {
@@ -159,6 +292,7 @@ export interface IngestSummary {
 }
 
 export interface Dashboard {
+  application?: { name: string | null; scanned: boolean; observability: string };
   ingested: boolean;
   ingest: IngestSummary | null;
   incidents: {
@@ -180,11 +314,14 @@ export interface Dashboard {
     incident_volume: number;
     priority_distribution: Record<Priority, number>;
     workflow_stage_distribution: Record<"queued" | "investigating" | "recommending" | "done" | "failed" | "disabled", number>;
-    mttd: NotEnabled; mttr: NotEnabled; resolution_rate: NotEnabled;
-    auto_remediation_count: NotEnabled; human_approval_count: NotEnabled; human_takeover_count: NotEnabled;
-    verification_outcomes: NotEnabled;
+    mttd: Metric; mttr: Metric; resolution_rate: Metric;
+    auto_remediation_count: Metric; human_approval_count: Metric; human_takeover_count: Metric;
+    verification_outcomes: Metric;
   };
 }
+
+/** A measured value, or `available: false` with the reason when there is no data yet. */
+export type Metric = NotEnabled | { available: true; value: number | Record<string, number>; note: string; unit?: string };
 
 /** A metric this POC has no backing data for (no remediation, approval, takeover or verification exists). */
 export interface NotEnabled {

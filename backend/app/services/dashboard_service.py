@@ -14,17 +14,34 @@ from app.state.store import JsonStore
 
 TIMELINE_BUCKET_MINUTES = 5
 
-# Metrics this POC has no backing data for (no remediation, approval, takeover or verification exists at
-# all). Reported explicitly as not enabled, rather than omitted or invented.
-NOT_ENABLED = {
-    "mttd": "No end-to-end detection-to-diagnosis timestamp is tracked in this POC.",
-    "mttr": "Not enabled in this POC: there is no remediation step.",
-    "resolution_rate": 'Not enabled in this POC: there is no "resolved" state.',
-    "auto_remediation_count": "Not enabled in this POC: there is no remediation step.",
-    "human_approval_count": "Not enabled in this POC: there is no approval workflow.",
-    "human_takeover_count": "Not enabled in this POC: there is no takeover workflow.",
-    "verification_outcomes": "Not enabled in this POC: there is no verification step.",
-}
+
+
+def _avg_seconds(values: list[float]) -> dict:
+    if not values:
+        return {"available": False, "note": "No data yet."}
+    return {"available": True, "value": round(sum(values) / len(values), 1), "unit": "seconds", "samples": len(values)}
+
+
+def resolution_analytics(store: JsonStore, incidents: list) -> dict:
+    """Real counts from the persisted resolution records (approvals, takeovers, verification outcomes, MTTD, MTTR)."""
+    records = [store.resolutions[i.incident_id] for i in incidents if i.incident_id in store.resolutions]
+    attempts = [a for r in records for a in r.attempts]
+    resolved = [(i, store.resolutions[i.incident_id]) for i in incidents
+                if i.incident_id in store.resolutions and store.resolutions[i.incident_id].state == "resolved"]
+    mttr = [(max(v.checked_at for v in r.verifications if v.status == "SUCCESS") - i.first_seen).total_seconds()
+            for i, r in resolved if any(v.status == "SUCCESS" for v in r.verifications)]
+    mttd = [(i.detected_at - i.first_seen).total_seconds() for i in incidents if i.detected_at]
+    outcomes = Counter(v.status for r in records for v in r.verifications)
+    count = lambda n, note: {"available": True, "value": n, "note": note}  # noqa: E731
+    return {
+        "mttd": _avg_seconds(mttd) | {"note": "Average from the first failing event to detection by this platform."},
+        "mttr": _avg_seconds(mttr) | {"note": "Average from the first failing event to verified recovery."},
+        "resolution_rate": count(round(len(resolved) / len(incidents), 3) if incidents else 0.0, "Share of incidents with verified recovery."),
+        "auto_remediation_count": count(sum(1 for a in attempts if a.approved_by == "policy (auto)"), "Actions run under policy without approval."),
+        "human_approval_count": count(sum(1 for a in attempts if a.approved_by != "policy (auto)"), "Actions run after a person approved them."),
+        "human_takeover_count": count(sum(1 for r in records if r.state == "human_takeover"), "Incidents a person took over."),
+        "verification_outcomes": count(dict(outcomes), "Telemetry verification results by status."),
+    }
 
 
 def summarize(store: JsonStore) -> dict:
@@ -45,6 +62,8 @@ def summarize(store: JsonStore) -> dict:
             counter["warnings"] += 1
 
     return {
+        "application": {"name": store.application.application_name if store.application else None,
+                          "scanned": store.application is not None, "observability": "OpenTelemetry"},
         "ingested": store.summary is not None,
         "ingest": store.summary.model_dump(mode="json") if store.summary else None,
         "incidents": {
@@ -78,6 +97,6 @@ def summarize(store: JsonStore) -> dict:
                 "recommending": stage.get("recommending", 0), "done": stage.get("done", 0),
                 "failed": stage.get("failed", 0), "disabled": stage.get("disabled", 0),
             },
-            **{name: {"available": False, "note": note} for name, note in NOT_ENABLED.items()},
+            **resolution_analytics(store, incidents),
         },
     }

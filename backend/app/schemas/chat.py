@@ -21,5 +21,6 @@ class ChatOutput(BaseModel):
 
 class ChatReply(ChatOutput):
     model: str
+    provider: str = "vertex"
     tools_called: list[str] = Field(default_factory=list)
     duration_ms: int

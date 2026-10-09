@@ -37,7 +37,7 @@ function SendIcon() {
 
 /** Dashboard-wide chat with the Chat Agent (a third ADK agent, read-only over existing incident data).
  * Conversation is ephemeral: it lives only in this component's state, lost on refresh. Nothing here starts
- * the Investigation/Recommendation agents or the background workflow - it only answers questions. */
+ * the Investigation/Resolution Decision agents or the background workflow - it only answers questions. */
 export function ChatWidget({ onOpenIncident }: { onOpenIncident: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);

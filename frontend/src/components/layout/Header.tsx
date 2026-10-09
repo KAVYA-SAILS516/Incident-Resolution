@@ -1,11 +1,14 @@
 import type { ThemeChoice } from "../../lib/theme";
 import type { Health } from "../../types";
 
-export type Tab = "dashboard" | "incidents";
+export type Tab = "dashboard" | "incidents" | "applications" | "activity" | "knowledge";
 
 const TABS: { key: Tab; label: string }[] = [
-  { key: "dashboard", label: "Command Center" },
+  { key: "dashboard", label: "Dashboard" },
   { key: "incidents", label: "Incidents" },
+  { key: "applications", label: "Applications" },
+  { key: "activity", label: "Agent Activity" },
+  { key: "knowledge", label: "Knowledge" },
 ];
 
 const THEMES: { key: ThemeChoice; label: string; icon: string }[] = [

@@ -27,11 +27,15 @@ class InvestigationOutput(BaseModel):
     analysis: str = Field(description="Short reasoning connecting the evidence to the root cause.")
     unknowns: list[str] = Field(description="What cannot be determined from the available data.")
     insufficient_evidence: bool
+    affected_services: list[str] = Field(default_factory=list, description="Services the evidence shows are affected.")
+    dependencies_involved: list[str] = Field(default_factory=list, description="Dependencies that caused or contributed, only if evidenced.")
+    alternative_causes: list[str] = Field(default_factory=list, description="Other plausible causes the evidence does not rule out.")
 
 
 class InvestigationRecord(InvestigationOutput):
     incident_id: str
     model: str
+    provider: str = "vertex"
     tools_called: list[str] = Field(default_factory=list)
     based_on_occurrences: int
     duration_ms: int

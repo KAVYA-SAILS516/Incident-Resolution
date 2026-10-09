@@ -13,11 +13,14 @@ from pathlib import Path
 from app.config.settings import settings
 from app.schemas.incident import Incident
 from app.schemas.log import IngestSummary, LogEntry, ParseFailure
+from app.application.models import ApplicationKnowledge
+from app.services.correlation import apply_application_context, correlate
 from app.services.incident_detector import detect_incidents
 from app.services.log_parser import parse_file
 from app.services.priority_engine import prioritize
 from app.services.workflow_classifier import classify_workflow
 from app.state.store import JsonStore
+from app.telemetry.otel import SOURCE as OTEL_SOURCE, fetch_trace, load_events
 
 LOG_SUFFIXES = {".log", ".txt"}
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -45,6 +48,7 @@ def save_upload(logs_dir: Path, filename: str, content: bytes) -> Path:
 
 
 def enrich(incident: Incident) -> Incident:
+    """Classify the workflow and score the priority (application context and correlation are already set)."""
     classification = classify_workflow(incident.affected_endpoints, incident.service)
     incident.workflow = classification.workflow
     incident.workflow_criticality = classification.criticality
@@ -54,7 +58,9 @@ def enrich(incident: Incident) -> Incident:
 
 def ingest(store: JsonStore, logs_dir: Path | None = None) -> IngestSummary:
     logs_dir = logs_dir or store.data_dir / "logs"
-    files = raw_log_files(logs_dir)
+    # Runtime telemetry comes only from the application's OpenTelemetry stack; log files are read only when the
+    # legacy file import is explicitly enabled (tests, fixtures).
+    files = raw_log_files(logs_dir) if settings.file_log_ingest else []
     entries: list[LogEntry] = []
     failures: list[ParseFailure] = []
     total = 0
@@ -66,6 +72,16 @@ def ingest(store: JsonStore, logs_dir: Path | None = None) -> IngestSummary:
         total += result.total_lines
         entries.extend(result.entries)
         failures.extend(result.failures)
+    telemetry = load_events(store.data_dir)  # OpenTelemetry events pulled earlier (already LogEntry objects)
+    if telemetry:
+        sources.append(OTEL_SOURCE)
+        total += len(telemetry)
+        entries.extend(telemetry)
+    ignored: list[str] = []
+    if store.application is not None:  # only the monitored application: other services' telemetry (e.g. the Collector's own) is not an incident source
+        known = {s.name for s in store.application.services}
+        ignored = sorted({e.service for e in entries if e.service not in known})
+        entries = [e for e in entries if e.service in known]
     entries.sort(key=lambda e: e.timestamp)
 
     detection = detect_incidents(
@@ -74,6 +90,12 @@ def ingest(store: JsonStore, logs_dir: Path | None = None) -> IngestSummary:
         min_occurrences=settings.detection_min_occurrences,
         family_depth=settings.endpoint_family_depth,
     )
+    knowledge: ApplicationKnowledge | None = store.application
+    by_id = {e.log_id: e for e in entries}
+    for incident in detection.incidents:
+        apply_application_context(incident, knowledge, [by_id[i] for i in incident.log_ids if i in by_id])
+    correlate(detection.incidents, by_id, entries, knowledge,
+              trace_lookup=fetch_trace if settings.otel_enabled and settings.otel_traces_url else None)
     incidents = sorted((enrich(i) for i in detection.incidents), key=lambda i: (-i.priority_score, i.first_seen))
 
     summary = IngestSummary(
@@ -92,6 +114,7 @@ def ingest(store: JsonStore, logs_dir: Path | None = None) -> IngestSummary:
         incidents_detected=len(incidents),
         below_threshold_groups=detection.below_threshold_groups,
         failures_sample=failures[:20],
+        ignored_services=ignored,
         ingested_at=datetime.now(timezone.utc),
     )
     store.replace_ingest(entries, incidents, summary)

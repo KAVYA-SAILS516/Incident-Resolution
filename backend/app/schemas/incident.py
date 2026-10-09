@@ -28,6 +28,7 @@ class Incident(BaseModel):
     affected_endpoints: list[str]
     occurrences: int
     first_seen: datetime
+    detected_at: datetime | None = None  # when this platform first detected it (kept across re-ingests)
     last_seen: datetime
     duration_seconds: int
     severity: str  # highest log level seen
@@ -41,10 +42,18 @@ class Incident(BaseModel):
     workflow_criticality: str = "UNKNOWN"
     workflow_reason: str = ""
 
+    # Application context (set when an application has been scanned and the service is known).
+    application: str | None = None
+    service_criticality: str | None = None  # the application's own criticality for this service
+    affected_services: list[str] = Field(default_factory=list)  # services seen failing in the same traces
+    trace_ids: list[str] = Field(default_factory=list)
+    correlated_incidents: list[dict] = Field(default_factory=list)  # {incident_id, service, shared_traces}
+
     priority: str = "P4"
     priority_score: float = 0.0
     priority_reasons: list[str] = Field(default_factory=list)
     priority_factors: list[PriorityFactor] = Field(default_factory=list)
+    priority_reason: str = ""
 
     log_ids: list[str] = Field(default_factory=list, description="Source log lines grouped into this incident")
 

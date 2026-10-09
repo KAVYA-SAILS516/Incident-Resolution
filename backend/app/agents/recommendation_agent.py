@@ -1,4 +1,4 @@
-"""Recommendation Agent (Google ADK): proposes what COULD be done. Nothing is executed."""
+"""Resolution Decision Agent (Google ADK): proposes what COULD be done. Nothing is executed."""
 
 from __future__ import annotations
 
@@ -15,16 +15,25 @@ from app.schemas.investigation import InvestigationRecord
 from app.schemas.recommendation import RecommendationOutput, RecommendationRecord
 from app.services.evidence_service import build_evidence
 from app.state.store import JsonStore
+from app.tools.application_tools import make_application_tools
 from app.tools.incident_tools import make_incident_tools
+from app.tools.resolution_tools import make_resolution_tools
 from app.tools.runbook_tools import load_runbook, make_runbook_tools, runbook_step_titles
 
-INSTRUCTION = """You are the Recommendation Agent in an incident-resolution proof of concept.
+INSTRUCTION = """You are the Resolution Decision Agent in an incident-resolution proof of concept.
 The incident was detected and prioritised by deterministic rules, and the Investigation Agent has analysed it.
 Propose actions an on-call engineer could take. You only recommend; nothing is executed.
 
 How to work:
-1. Call get_incident_details, get_investigation_result and get_runbook. Call them together in one turn.
+1. Call get_incident_details, get_investigation_result, get_runbook, get_application_context and
+   get_resolution_candidates. Call them together in one turn.
 2. Return 3 to 5 recommendations, the most useful first.
+3. Also return resolution_choice: pick recommended_option_id from get_resolution_candidates and explain why in
+   reason, using the investigation, the service's criticality and dependencies, and any previously_failed options
+   (never choose one of those; if no candidate is sensible return null). You may only choose an option_id that is
+   listed there - there are no other executable actions, and you cannot change risk, blast radius or the
+   execution_mode, which policy fixes. suggested_execution_mode may only ask for MORE caution than a candidate's.
+   You cannot declare an incident resolved; telemetry verification does that.
 
 Rules:
 - If a runbook is available, prefer its steps where they fit the investigation. For such an action, copy the
@@ -43,13 +52,15 @@ MAX_RECOMMENDATIONS = 6
 RUNBOOK_TITLE_MATCH = 0.75
 
 
-def build_recommendation_agent(evidence: dict, investigation: InvestigationRecord, error_type: str, model=None) -> LlmAgent:
+def build_recommendation_agent(evidence: dict, investigation: InvestigationRecord, error_type: str, model=None,
+                               resolution_tools: list | None = None) -> LlmAgent:
     return LlmAgent(
-        name="recommendation_agent",
+        name="resolution_decision_agent",
         description="Recommends next actions for one investigated incident, grounded in runbooks where available.",
         model=model or get_model(),
         instruction=INSTRUCTION,
-        tools=[*make_incident_tools(evidence, investigation), *make_runbook_tools(error_type)],
+        tools=[*make_incident_tools(evidence, investigation), *make_runbook_tools(error_type),
+               *make_application_tools(evidence), *(resolution_tools or [])],
         output_schema=RecommendationOutput,
         output_key="recommendations",
         generate_content_config=types.GenerateContentConfig(temperature=0.2),
@@ -79,10 +90,11 @@ def validate_recommendations(output: RecommendationOutput, runbook: dict | None)
 
 async def recommend(incident: Incident, investigation: InvestigationRecord, store: JsonStore) -> RecommendationRecord:
     evidence = build_evidence(incident, store)
-    agent = build_recommendation_agent(evidence, investigation, incident.error_type)
+    agent = build_recommendation_agent(evidence, investigation, incident.error_type,
+                                       resolution_tools=make_resolution_tools(store, incident, investigation))
     prompt = (f"Recommend next actions for incident {incident.incident_id}: {incident.title} "
               f"({incident.priority}, {incident.workflow}). Use your tools, then return the result.")
-    run = await run_agent(agent, prompt)
+    run = await run_agent(agent, prompt, schema=RecommendationOutput)
     try:
         output = RecommendationOutput.model_validate(run.output)
     except ValidationError as exc:
@@ -95,6 +107,7 @@ async def recommend(incident: Incident, investigation: InvestigationRecord, stor
         **output.model_dump(),
         incident_id=incident.incident_id,
         model=run.model,
+        provider=run.provider,
         runbook_id=runbook["runbook_id"] if runbook else None,
         tools_called=run.tools_called,
         validation_notes=notes,

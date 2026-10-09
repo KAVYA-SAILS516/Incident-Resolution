@@ -46,9 +46,8 @@ backend/
   .env.example, requirements.txt, pytest.ini
 frontend/                    React + Vite + TypeScript UI (talks only to the backend)
 data/
-  logs/sample_application.log    the raw log (read-only source data)
-  logs/uploads/                  files uploaded through the API (new files, never overwritten)
-  runbooks/                      SIMULATED runbooks, one per error type in the log
+  runbooks/                      generic SIMULATED runbooks by error type (none are tied to the monitored application)
+  telemetry/, application/       OpenTelemetry events pulled from the app's stack, and its scanned knowledge (generated)
   incidents/, logs/*.json        generated state
 ```
 
@@ -57,8 +56,8 @@ data/
 Requires Python 3.11+ and Node 18+.
 
 ```bash
-python -m venv .venv
-.venv/Scripts/pip install -r backend/requirements.txt      # Windows (use .venv/bin/pip elsewhere)
+python -m venv venv
+venv/Scripts/pip install -r backend/requirements.txt      # Windows (use venv/bin/pip elsewhere)
 cp backend/.env.example backend/.env                         # then set GOOGLE_CLOUD_PROJECT
 gcloud auth application-default login                        # Vertex AI via Application Default Credentials
 cd frontend && npm install
@@ -88,14 +87,14 @@ Without `GOOGLE_CLOUD_PROJECT` everything deterministic still works; all three a
 
 ```bash
 cd backend
-../.venv/Scripts/python -m uvicorn app.main:app --reload     # http://127.0.0.1:8000, docs at /docs
+../venv/Scripts/python -m uvicorn app.main:app --reload     # http://127.0.0.1:8000, docs at /docs
 cd frontend
 npm run dev                                                  # http://localhost:5173 (proxies /api and /health)
 ```
 
 If the backend runs on another port: `VITE_API_TARGET=http://127.0.0.1:8010 npm run dev`.
 
-**The incident-resolution workflow runs in the backend, independent of the UI.** After `POST /api/logs/ingest`
+**The incident-resolution workflow runs in the backend, independent of the UI.** After `POST /api/telemetry/pull`
 finishes, and again at startup for anything left unfinished by a previous run, the backend queues every
 incident - highest priority first - and runs the Investigation Agent then the Recommendation Agent for each,
 up to `MAX_CONCURRENT_ANALYSES` at a time (`app/agents/auto_analysis.py`). This happens whether or not anyone
@@ -130,15 +129,16 @@ GET requests never start an agent; they only report the background workflow's st
 
 ## 6. Source data
 
-`data/logs/sample_application.log`: 5,000 lines, 2026-09-01 09:00:00Z to 11:46:38Z, one request every 2 s, four
-services (auth, order, payment, catalog), hosts app-01 to app-04, environment `production-simulated`.
-513 abnormal lines: SLOW_REQUEST 209 (WARNING, HTTP 200), AUTHENTICATION_FAILURE 69 (401), INTERNAL_SERVER_ERROR 66
-(500), DATABASE_TIMEOUT 63 (503), RATE_LIMIT_EXCEEDED 60 (429), RESOURCE_PRESSURE 46 (503). Baseline is roughly 2
-abnormal lines per minute, with two cross-service spikes at 09:30-09:32 and 10:43-10:46 (15-23 per minute).
+**The monitored application is the one you scan (the OpenTelemetry Astronomy Shop); its telemetry is the only
+runtime data.** Set `APPLICATION_NAME` / `APPLICATION_PATH` to scan it at startup, and `OTEL_*` (see §18) to read its
+OpenSearch logs, Prometheus metrics and Jaeger traces. If the application or a backend is unreachable, the UI says
+so; nothing falls back to other data. Plain log-file import (`data/logs/*.log`, `POST /api/logs/ingest`) is disabled
+(`FILE_LOG_INGEST=false`, HTTP 410) and exists only for parser/detector tests.
 
-The file is treated as read-only: it is opened for reading only, and uploads are written as new files under
-`data/logs/uploads/` (opened with exclusive-create, so nothing is ever overwritten). It was copied into
-`data/logs/` from the original download; the original is unchanged (same SHA-1).
+`backend/tests/fixtures/sample_application.log` is a synthetic 5,000-line log kept **only as a test fixture** for the
+parser, detector and legacy API tests. It is never loaded at runtime and no incident, application or statistic
+in the running system comes from it. The numbers in §7-§11 below describe that fixture and are kept as test
+documentation of the detection and scoring rules.
 
 ## 7. Parsing
 
@@ -319,7 +319,7 @@ the persisted files whenever they are present and up to date, regardless of what
 ## 15. Tests
 
 ```bash
-cd backend && ../.venv/Scripts/python -m pytest        # 62 tests, ~10 s, no network
+cd backend && ../venv/Scripts/python -m pytest        # 62 tests, ~10 s, no network
 cd frontend && npx vitest run && npx tsc --noEmit      # 19 tests
 ```
 
@@ -386,3 +386,100 @@ explicit, separate action by design, not a trigger for the investigate/recommend
   source.
 - Uploads are limited to `.log`/`.txt` files of at most 20 MB, and they are stored under generated names.
 - CORS is limited to the configured origins.
+
+## 18. Application integration (OpenTelemetry Astronomy Shop)
+
+The system can watch a real application: point it at a local copy of the
+[OpenTelemetry Astronomy Shop](https://github.com/open-telemetry/opentelemetry-demo) and it learns the
+application from its files and reads its live telemetry.
+
+```
+Application path --> discovery --> ApplicationKnowledge ----+
+Shop's OTel Collector --> OpenSearch / Jaeger / Prometheus --+--> LogEntry --> detection --> trace correlation
+      --> triage (priority engine) --> investigation --> resolution decision --> human approval / takeover
+      --> guarded remediation --> verification from telemetry --> retry or HUMAN_TAKEOVER
+```
+
+**Application path.** Applications page (or `POST /api/applications/scan` with `{name, path}`). The path is
+validated (exists, directory, readable, inside `APPLICATION_ROOT` if set). Discovery is read-only
+(`backend/app/application/`): it never executes anything, ignores `.git`, `node_modules`, build output and
+binaries, skips files over 512 KB, caps the file count, and skips symlinks that leave the root.
+
+**What is discovered, and from where** (nothing is invented; missing facts stay `null`/"unknown"):
+
+| Fact | Source in the application |
+|---|---|
+| Services, kind (application vs infrastructure) | Compose / Kubernetes manifests (`OTEL_SERVICE_NAME`) |
+| Criticality | the `service.criticality` resource attribute the application declares |
+| Dependencies | `depends_on` and `*_ADDR` environment references |
+| Purpose, documentation | service `README.md` files, `docs/` |
+| APIs | `.proto` services/RPCs, OpenAPI files |
+| Failure scenarios | feature-flag (flagd) definitions |
+| Telemetry | OpenTelemetry Collector config pipelines |
+
+**Priority.** `config/priority_rules.py` gains one input, `SERVICE_CRITICALITY_WEIGHT`: when a service's
+criticality is known, that share of the score comes from it and the other weights are scaled so the total stays 1.
+Criticality is an input, not the priority; P1-P4 still come from the thresholds. Incidents on unknown services,
+and plain log files, are scored exactly as before. Each incident gets a `priority_reason` built from its evidence.
+
+**Telemetry.** Set `OTEL_ENABLED`, `OTEL_LOGS_URL` (OpenSearch), `OTEL_TRACES_URL` (Jaeger query base) and
+`OTEL_METRICS_URL` (Prometheus) - see `backend/.env.example`. `POST /api/telemetry/pull` reads the newest log
+events into the existing `LogEntry` model (extended with `application`, `trace_id`, `span_id`, `attributes`),
+stores them under `data/telemetry/`, and runs the normal ingest. An unreachable or unconfigured signal is reported
+as unavailable; nothing is faked.
+
+**Correlation.** Incidents get the services that failed in the same traces: from `trace_id` on logs and from
+error spans in the trace backend (callers that do not log failures still show up), plus correlated incidents
+with their dependency relation.
+
+**Resolution Decision** (`services/resolution_service.py`, policy in `config/resolution_rules.py`): options
+come only from four registered actions (restart, rollback configuration, scale, clear cache), only for services
+the scanned application knows. Each option has risk, impact, blast radius (from the dependents), reversibility,
+confidence (investigation confidence x action fit) and an execution mode: `AUTO_EXECUTE` (low risk, reversible,
+confident, P3/P4, not CRITICAL), `HUMAN_APPROVAL`, or `HUMAN_TAKEOVER`. `POST /api/incidents/{id}/resolution/execute`
+(approve), `/takeover`, `/verify`; `GET .../resolution`. The Recommendation Agent is unchanged and stays advisory.
+
+**Remediation is simulated.** Nothing is run against the application; the action is recorded. **Verification**
+then compares the share of abnormal events among the service's events before and after the action, from real
+telemetry (plus Prometheus span metrics over the window since the action), and answers `SUCCESS`, `FAILED`, or
+`INCONCLUSIVE` (too early, no telemetry, or too little traffic). A failed option is never offered again, the agents
+re-run, and after `REMEDIATION_MAX_ATTEMPTS` failures the decision is `HUMAN_TAKEOVER`.
+
+**Knowledge.** `POST /api/knowledge/ask` answers application questions from the scan only (no LLM); the Chat Agent
+has the same data as a tool. `GET /api/applications`, `GET /api/activity` feed the Applications and Agent Activity pages.
+
+### AI provider and resolution reasoning
+
+All agents get their model from `agents/runner.py` (`AI_PROVIDER=vertex`: Gemini on Vertex AI via ADC; env
+`GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `VERTEX_MODEL`). Without configuration a call fails with
+"Vertex AI is not configured..."; nothing falls back to a scripted model. Tests inject a scripted model that is
+recorded as provider `fake`. Each AI call is audited (agent, provider, model, duration, success, output
+validation, context size; no prompts or credentials) in `data/incidents/ai_calls.jsonl` and shown in Agent Activity.
+Runs are capped at 15 model calls.
+
+The Recommendation Agent now also sees `get_resolution_candidates` (the policy-approved, non-failed options) and
+returns a `resolution_choice`. `resolution_service` accepts it only if the option is a current candidate; risk,
+blast radius and execution mode stay policy-defined (the model may ask for stricter handling, never looser).
+
+### Ten agents
+
+Detection (`incident_detector`), Correlation (`services/correlation.py`), Triage (`priority_engine`), Investigation
+(Gemini), Resolution Decision (Gemini choosing among policy-approved options; `resolution_service`), Remediation
+(`services/remediation.py`, guarded and simulated), Verification (`services/verification.py`, telemetry only), Case
+(`services/case_agent.py`), Communication (`services/communication_agent.py`, template-based, no AI) and Knowledge
+(`application/knowledge.py` + the chat assistant's `get_application_knowledge` tool). There is no separate root-cause
+or policy agent. Verification answers `SUCCESS`, `FAILED` or `UNKNOWN` (too early, no telemetry, too little traffic).
+`GET /api/incidents/{id}/case` and `/communication` expose the Case and Communication agents. P1-P4 thresholds can be
+overridden with `PRIORITY_P1_MIN`, `PRIORITY_P2_MIN`, `PRIORITY_P3_MIN`.
+
+### Metric-based detection
+
+Failures that are never logged at WARN/ERROR still show up in the Prometheus span metrics. On every telemetry read
+(`telemetry/metric_detection.py`) each 30 s step where a service has an error ratio >= `METRIC_ERROR_RATIO_MIN` (25%)
+with at least `METRIC_MIN_REQUESTS` spans, or a p95 latency >= `METRIC_LATENCY_MIN_MS` and `METRIC_LATENCY_FACTOR` times its
+30-minute baseline, becomes one normalised event (`source: prometheus`, error type `METRIC_ERROR_RATIO_HIGH` /
+`METRIC_LATENCY_HIGH`, metric evidence in `attributes`). They go through the same detector, priority engine and agents
+as log events, so a sustained anomaly (several steps) opens an incident and a blip does not. Metric-detected incidents
+without shared trace ids are correlated through the application's dependency graph when they fail at the same time, and
+their recovery is verified against the same Prometheus metric measured since the action. If Prometheus is down the pull
+still returns the log events and reports `metrics_error`.

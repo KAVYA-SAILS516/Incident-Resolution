@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+
+# Tests must never read the developer's real backend/.env (it holds the real project / telemetry settings).
+os.environ.setdefault("ENV_FILE", os.devnull)
+
 import shutil
 from pathlib import Path
 from typing import AsyncGenerator
@@ -14,7 +19,9 @@ from app.agents import auto_analysis, runner
 from app.config.settings import Settings
 from app.state import store as store_module
 
-REAL_LOG = Path(__file__).resolve().parents[2] / "data" / "logs" / "sample_application.log"
+# A synthetic plain log kept ONLY as a parser/detector fixture. It is never loaded at runtime (FILE_LOG_INGEST is off).
+REAL_LOG = Path(__file__).resolve().parent / "fixtures" / "sample_application.log"
+LEGACY_FILE_LOG_MODULES = {"test_api", "test_chat", "test_evidence_service", "test_incident_detector", "test_log_parser"}
 
 
 def log_line(ts: str, level: str = "ERROR", service: str = "payment-service", endpoint: str = "/api/v1/payments",
@@ -116,6 +123,19 @@ def no_background_workflow(monkeypatch):
     monkeypatch.setattr(auto_analysis, "settings", Settings(auto_analyze=False))
     yield
     auto_analysis.reset()
+
+
+@pytest.fixture(autouse=True)
+def legacy_file_logs(request, monkeypatch):
+    """Plain-log-file import is off by default (runtime never reads local log files). Only the legacy parser /
+    detector / API test modules switch it on, against the isolated fixture file."""
+    if request.module.__name__.rsplit(".", 1)[-1] in LEGACY_FILE_LOG_MODULES:
+        from app.api import logs as logs_api
+        from app.services import ingestion
+
+        enabled = Settings(file_log_ingest=True)
+        monkeypatch.setattr(ingestion, "settings", enabled)
+        monkeypatch.setattr(logs_api, "settings", enabled)
 
 
 @pytest.fixture

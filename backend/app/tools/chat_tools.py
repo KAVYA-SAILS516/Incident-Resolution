@@ -5,6 +5,7 @@ stays a small, bounded request.
 
 from __future__ import annotations
 
+from app.application.knowledge import answer_question
 from app.schemas.incident import Incident
 from app.services.dashboard_service import summarize
 from app.services.evidence_service import build_evidence
@@ -37,7 +38,9 @@ def make_chat_tools(store: JsonStore) -> list:
         incident = store.incidents.get(incident_id)
         if incident is None:
             return {"error": f"No incident with id {incident_id!r}"}
-        result: dict = {**_compact(incident), "facts": build_evidence(incident, store)["facts"]}
+        result: dict = {**_compact(incident), "facts": build_evidence(incident, store)["facts"],
+                        "application": incident.application, "service_criticality": incident.service_criticality,
+                        "priority_reason": incident.priority_reason, "affected_services": incident.affected_services}
         investigation = store.investigations.get(incident_id)
         if investigation is not None:
             result["investigation"] = {
@@ -45,6 +48,11 @@ def make_chat_tools(store: JsonStore) -> list:
                 "confidence": investigation.confidence,
                 "insufficient_evidence": investigation.insufficient_evidence,
             }
+        resolution = store.resolutions.get(incident_id)
+        if resolution is not None:
+            result["resolution"] = {"decision": resolution.decision, "state": resolution.state,
+                                    "recommended_option_id": resolution.recommended_option_id,
+                                    "reason": resolution.decision_reason, "failed_options": resolution.failed_options}
         recommendations = store.recommendations.get(incident_id)
         if recommendations is not None and recommendations.recommendations:
             top = recommendations.recommendations[0]
@@ -57,4 +65,10 @@ def make_chat_tools(store: JsonStore) -> list:
         summary = summarize(store)
         return {"incidents": summary["incidents"], "queue": summary["agents"]["queue"]}
 
-    return [list_incidents, get_incident_summary, get_dashboard_overview]
+    def get_application_knowledge(question: str) -> dict:
+        """Answer a question about the scanned application (its services, what each does, dependencies, APIs,
+        criticality, telemetry, documented failure scenarios) from the application scan. Returns the answer
+        and supporting facts; says so when no application has been scanned."""
+        return answer_question(store.application, question)
+
+    return [list_incidents, get_incident_summary, get_dashboard_overview, get_application_knowledge]

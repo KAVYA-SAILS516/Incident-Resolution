@@ -6,7 +6,7 @@ function statusMessage(detail: IncidentDetail): { working: string | null; idle: 
   const { state, error } = detail.incident.analysis;
   const investigated = !!detail.investigation;
   if (state === "recommending") {
-    return { working: `The Recommendation Agent is preparing options${detail.evidence.runbook.available ? ` using runbook ${detail.evidence.runbook.runbook_id}` : ""}…`, idle: "" };
+    return { working: `The Resolution Decision Agent is preparing options${detail.evidence.runbook.available ? ` using runbook ${detail.evidence.runbook.runbook_id}` : ""}…`, idle: "" };
   }
   if (state === "failed") return { working: null, idle: `Automatic analysis failed: ${error}` };
   if (state === "disabled") return { working: null, idle: `Not analysed: ${error ?? "automatic analysis is disabled"}.` };
@@ -24,7 +24,7 @@ export function RecommendationsCard({ detail, selectedIndex, onSelect }: {
     <Card
       question="What could be done?"
       title="Recommendations"
-      actions={<InfoTip text="Recommendation Agent (Google ADK): runs as part of the background incident-resolution workflow, proposing actions from the investigation and preferring the simulated runbook. Nothing is executed." />}
+      actions={<InfoTip text="Resolution Decision Agent (Google ADK): runs as part of the background incident-resolution workflow, proposing actions from the investigation and preferring the simulated runbook. Nothing is executed." />}
     >
       {!recs && (
         msg.working ? (

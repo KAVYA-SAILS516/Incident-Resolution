@@ -4,6 +4,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from app.agents.auto_analysis import start_workflow
+from app.config.settings import settings
 from app.schemas.log import IngestSummary
 from app.services.ingestion import LOG_SUFFIXES, ingest, save_upload
 from app.state.store import get_store
@@ -15,8 +16,11 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 @router.post("/ingest", response_model=IngestSummary)
 async def ingest_logs(file: UploadFile | None = File(default=None)) -> IngestSummary:
-    """Process every raw log file in data/logs/. An optional uploaded file is saved as an additional source
-    first (existing files are never modified)."""
+    """Legacy plain-log-file import. Disabled at runtime (FILE_LOG_INGEST=false): the monitored application's
+    telemetry is read with POST /api/telemetry/pull, and nothing falls back to local log files."""
+    if not settings.file_log_ingest:
+        raise HTTPException(410, "File log import is disabled. Telemetry is read from the monitored application's "
+                                 "OpenTelemetry stack: POST /api/telemetry/pull.")
     if file is not None and file.filename:
         suffix = "." + file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
         if suffix not in LOG_SUFFIXES:

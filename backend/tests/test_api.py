@@ -167,15 +167,17 @@ def test_background_workflow_failure_does_not_stop_other_incidents(client, backg
     assert len(statuses) == len(incident_ids)  # every incident was attempted, none stuck "queued"
 
 
-def test_analytics_reports_not_enabled_metrics_honestly(client):
+def test_analytics_reports_real_counts_and_is_honest_when_there_is_no_data(client):
     _ingest(client)
     analytics = client.get("/api/dashboard/summary").json()["analytics"]
     assert analytics["incident_volume"] == client.get("/api/incidents").json()["total"]
     assert sum(analytics["priority_distribution"].values()) == analytics["incident_volume"]
     assert sum(analytics["workflow_stage_distribution"].values()) == analytics["incident_volume"]
-    for metric in ("mttd", "mttr", "resolution_rate", "auto_remediation_count", "human_approval_count",
-                   "human_takeover_count", "verification_outcomes"):
-        assert analytics[metric]["available"] is False and analytics[metric]["note"]
+    for metric in ("auto_remediation_count", "human_approval_count", "human_takeover_count", "verification_outcomes"):
+        assert analytics[metric]["available"] is True and analytics[metric]["note"]
+    assert analytics["human_approval_count"]["value"] == 0 and analytics["resolution_rate"]["value"] == 0.0
+    assert analytics["mttd"]["available"] is True and analytics["mttd"]["value"] > 0  # first failing event -> detected
+    assert analytics["mttr"]["available"] is False and analytics["mttr"]["note"]  # nothing has been verified resolved
 
 
 def test_investigate_without_vertex_config_returns_503(client, monkeypatch):

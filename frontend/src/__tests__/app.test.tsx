@@ -95,12 +95,12 @@ describe("theme", () => {
     expect(loadTheme()).toBe("light");
   });
 
-  it("header shows only Command Center and Incidents tabs and the Vertex AI state", () => {
+  it("header shows the five sections and the Vertex AI state", () => {
     render(<Header tab="dashboard" onTab={() => {}} theme="light" onTheme={() => {}}
                    health={{ status: "ok", llm_configured: true, model: "gemini-2.5-flash", logs_ingested: 5000, incidents: 21 }} />);
-    expect(screen.getByRole("button", { name: "Command Center" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Incidents" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Agent Activity" })).not.toBeInTheDocument();
+    for (const name of ["Dashboard", "Incidents", "Applications", "Agent Activity", "Knowledge"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
     expect(screen.getByText(/gemini-2.5-flash: Configured/)).toBeInTheDocument();
   });
 });
@@ -108,7 +108,7 @@ describe("theme", () => {
 describe("dashboard (command center)", () => {
   const data: DashboardData = {
     ingested: true,
-    ingest: { sources: ["sample_application.log"], total_lines: 5000, parsed_lines: 5000, failed_lines: 0, error_logs: 304,
+    ingest: { sources: ["opentelemetry"], total_lines: 5000, parsed_lines: 5000, failed_lines: 0, error_logs: 304,
       warning_logs: 209, services: ["order-service"], environments: ["production-simulated"],
       time_range: { start: null, end: null }, incidents_detected: 21, below_threshold_groups: 183, failures_sample: [],
       ingested_at: "2026-09-25T12:00:00Z" },
@@ -146,7 +146,7 @@ describe("dashboard (command center)", () => {
     expect(onShow).toHaveBeenCalledWith({ status: "recommendations_ready" });
     fireEvent.click(screen.getByRole("button", { name: "Show P4 incidents" }));
     expect(onShow).toHaveBeenCalledWith({ priority: "P4" });
-    fireEvent.click(screen.getByRole("button", { name: "Process Logs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Read Telemetry" }));
     expect(onIngest).toHaveBeenCalled();
   });
 });

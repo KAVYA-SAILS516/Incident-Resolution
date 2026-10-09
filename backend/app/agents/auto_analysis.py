@@ -1,4 +1,4 @@
-"""Background incident-resolution workflow: the Investigation and Recommendation agents run independently
+"""Background incident-resolution workflow: the Investigation and Resolution Decision agents run independently
 of the UI, as soon as an incident exists, highest priority first. The UI only ever reads this state (via
 Incident.analysis and the dashboard queue counts) - opening an incident never starts an agent.
 
@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from app.agents.investigation_agent import investigate
 from app.agents.recommendation_agent import recommend
 from app.config.settings import settings
+from app.services import resolution_service
 from app.state.store import JsonStore
 
 log = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ async def analyze_incident(store: JsonStore, incident_id: str, *, force: bool = 
             store.save_investigation(investigation)
             _states[incident_id] = AnalysisState("recommending")
             store.save_recommendations(await recommend(incident, investigation, store))
+            resolution_service.refresh(store, incident_id)  # Resolution Decision from the fresh investigation
             _states[incident_id] = AnalysisState("done")
         except asyncio.CancelledError:
             _states.pop(incident_id, None)
@@ -143,3 +145,14 @@ def start_workflow(store: JsonStore) -> int:
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
     return len(pending)
+
+
+def start_reanalysis(store: JsonStore, incident_id: str) -> bool:
+    """After a failed verification: run Investigation -> Recommendation -> Resolution Decision again (the
+    failed option is already excluded). Without a configured LLM only the Resolution Decision is refreshed."""
+    if not (settings.auto_analyze and settings.llm_configured):
+        return False
+    task = asyncio.get_running_loop().create_task(analyze_incident(store, incident_id, force=True))
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+    return True

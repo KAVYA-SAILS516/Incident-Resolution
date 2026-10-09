@@ -38,7 +38,7 @@ export function InvestigationCard({ detail }: { detail: IncidentDetail }) {
       {inv && (
         <>
           <p className="muted small">
-            {inv.model} · tools used: {inv.tools_called.join(", ")} · {(inv.duration_ms / 1000).toFixed(1)}s ·{" "}
+            {inv.provider === "fake" ? "TEST PROVIDER (not Gemini)" : "Vertex AI"} · {inv.model} · tools used: {inv.tools_called.join(", ")} · {(inv.duration_ms / 1000).toFixed(1)}s ·{" "}
             {new Date(inv.created_at).toLocaleString()}
           </p>
           {stale && <div className="alert alert-warning">New log lines changed this incident since the investigation; the result may be out of date.</div>}
@@ -52,10 +52,13 @@ export function InvestigationCard({ detail }: { detail: IncidentDetail }) {
             <div>
               <span className="field-label">Evidence sources</span>
               <div className="row" style={{ flexWrap: "wrap" }}>
-                <Badge tone="info">Logs</Badge>
+                <Badge tone="info">Logs · OpenTelemetry</Badge>
+                {detail.evidence.telemetry?.service_metrics && <Badge tone="info">Metrics · Prometheus</Badge>}
+                {(detail.evidence.telemetry?.traces.length ?? 0) > 0 && <Badge tone="info">Traces · Jaeger</Badge>}
+                {detail.incident.application && <Badge tone="info">Application knowledge</Badge>}
                 {detail.evidence.runbook.available && <Badge tone="info">Runbook {detail.evidence.runbook.runbook_id}</Badge>}
               </div>
-              <p className="muted small">Metrics, change history and incident history are not connected in this POC.</p>
+              <p className="muted small">Deployment / change history is not connected; unavailable signals are listed under data limits.</p>
             </div>
           </div>
           <div className="three-col">

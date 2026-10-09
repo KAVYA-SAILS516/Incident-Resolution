@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { ActivityPage } from "./components/activity/ActivityPage";
+import { ApplicationContextCard } from "./components/incident/ApplicationContextCard";
+import { ApplicationsPage } from "./components/applications/ApplicationsPage";
+import { KnowledgePage } from "./components/knowledge/KnowledgePage";
+import { CaseCard } from "./components/incident/CaseCard";
+import { ResolutionCard } from "./components/incident/ResolutionCard";
 import { Badge, criticalityTone, priorityTone } from "./components/shared/common";
 import { ChatWidget } from "./components/chat/ChatWidget";
 import { Dashboard, type ListFilter } from "./components/dashboard/Dashboard";
@@ -83,6 +89,14 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [dashboard?.agents.queue, loadDashboard]);
 
+  // The backend now reads the application's telemetry by itself (TELEMETRY_POLL_SECONDS), so incidents appear without a
+  // click. Reload the dashboard and list periodically while one of them is on screen.
+  useEffect(() => {
+    if (selectedId || (tab !== "dashboard" && tab !== "incidents")) return;
+    const timer = window.setInterval(() => { loadDashboard(); setListKey((k) => k + 1); }, 20000);
+    return () => window.clearInterval(timer);
+  }, [tab, selectedId, loadDashboard]);
+
   const open = (id: string) => {
     setDetail(null);
     setSelectedId(id);
@@ -106,8 +120,8 @@ export default function App() {
     setNotice(null);
     setIngesting(true);
     try {
-      const s = await api.ingest();
-      setNotice(`Processed ${s.parsed_lines} of ${s.total_lines} lines (${s.failed_lines} unparsed) from ${s.sources.length} source(s): ${s.incidents_detected} incidents detected. The background workflow is now analysing them.`);
+      const s = await api.pullTelemetry();
+      setNotice(`Read ${s.pulled} OpenTelemetry log events${s.metric_anomaly_events ? ` and ${s.metric_anomaly_events} Prometheus metric anomalies` : ""}: ${s.incidents_detected} incidents detected. The background workflow is now analysing them.${s.metrics_error ? ` (Metrics unavailable: ${s.metrics_error})` : ""}`);
       refresh();
     } catch (e) {
       fail(e);
@@ -134,7 +148,7 @@ export default function App() {
   };
 
   const inc = detail?.incident;
-  const lc = detail ? lifecycleOfDetail(detail.incident, detail.investigation, detail.recommendations) : null;
+  const lc = detail ? lifecycleOfDetail(detail.incident, detail.investigation, detail.recommendations, detail.resolution ?? null) : null;
 
   return (
     <div className="app">
@@ -164,7 +178,7 @@ export default function App() {
                     <div className="row" style={{ flexWrap: "wrap" }}>
                       <h2 className="inc-id">{inc.incident_id}</h2>
                       <Badge tone={priorityTone(inc.priority)}>{inc.priority}</Badge>
-                      <Badge tone={criticalityTone(inc.workflow_criticality)}>{inc.workflow_criticality} business criticality</Badge>
+                      <Badge tone={criticalityTone(inc.service_criticality ?? inc.workflow_criticality)}>{inc.service_criticality ?? inc.workflow_criticality} business criticality</Badge>
                       <Badge tone={lc!.stageTone}>{lc!.aiStage}</Badge>
                       <Badge tone={lc!.statusTone}>{lc!.status}</Badge>
                     </div>
@@ -172,6 +186,7 @@ export default function App() {
                     <div className="ws-head-meta">
                       <div><span>Started </span><strong>{inc.first_seen.replace("T", " ").replace("Z", "")} (log time)</strong></div>
                       <div><span>Duration </span><strong>{Math.max(1, Math.round(inc.duration_seconds / 60))} min</strong></div>
+                      {inc.application && <div><span>Application </span><strong>{inc.application}</strong></div>}
                       <div><span>Workflow </span><strong>{inc.workflow}</strong></div>
                       <div><span>Service </span><strong>{inc.service}</strong></div>
                       <div><span>Environment </span><strong>{inc.environment ?? "—"}</strong></div>
@@ -179,16 +194,32 @@ export default function App() {
                   </div>
                 </section>
                 <IncidentSummary detail={detail} onViewEvidence={() => setEvidenceOpen(true)} />
+                <ApplicationContextCard detail={detail} onOpen={open} />
                 <LifecycleStepper lifecycle={lc!} />
                 <InvestigationCard detail={detail} />
                 <RecommendationsCard detail={detail} selectedIndex={selectedOption} onSelect={setSelectedOption} />
-                <DecisionSafetyCard detail={detail}
-                                    selected={detail.recommendations?.recommendations[selectedOption] ?? detail.recommendations?.recommendations[0] ?? null}
-                                    busy={investigatingMore} onInvestigateMore={() => investigateMore(inc.incident_id)} />
-                <div className="two-col">
-                  <IncidentTimeline detail={detail} ingestedAt={dashboard?.ingest?.ingested_at ?? null} />
-                  <PostDecisionStages detail={detail} />
-                </div>
+                {inc.application ? (
+                  <>
+                    <ResolutionCard detail={detail} onChanged={() => { loadDetail(inc.incident_id); loadDashboard(); }} />
+                    <div className="button-row">
+                      <button type="button" disabled={investigatingMore} onClick={() => investigateMore(inc.incident_id)}>
+                        {investigatingMore ? "Investigating…" : "Investigate more"}
+                      </button>
+                    </div>
+                    <CaseCard incidentId={inc.incident_id} refreshKey={`${detail.resolution?.state}-${detail.resolution?.attempts.length}-${detail.resolution?.verifications.length}`} />
+                    <IncidentTimeline detail={detail} ingestedAt={dashboard?.ingest?.ingested_at ?? null} />
+                  </>
+                ) : (
+                  <>
+                    <DecisionSafetyCard detail={detail}
+                                        selected={detail.recommendations?.recommendations[selectedOption] ?? detail.recommendations?.recommendations[0] ?? null}
+                                        busy={investigatingMore} onInvestigateMore={() => investigateMore(inc.incident_id)} />
+                    <div className="two-col">
+                      <IncidentTimeline detail={detail} ingestedAt={dashboard?.ingest?.ingested_at ?? null} />
+                      <PostDecisionStages detail={detail} />
+                    </div>
+                  </>
+                )}
                 <details className="card">
                   <summary><strong>Evidence & triage details</strong> <span className="muted small">(facts, priority factors, related errors)</span></summary>
                   <div className="stack" style={{ marginTop: "0.8rem" }}>
@@ -199,6 +230,10 @@ export default function App() {
             )}
           </div>
         )}
+
+        {tab === "applications" && <ApplicationsPage onScanned={refresh} />}
+        {tab === "activity" && <ActivityPage onOpen={open} />}
+        {tab === "knowledge" && <KnowledgePage />}
       </main>
       {evidenceOpen && detail && <EvidenceModal detail={detail} onClose={() => setEvidenceOpen(false)} />}
       <ChatWidget onOpenIncident={open} />

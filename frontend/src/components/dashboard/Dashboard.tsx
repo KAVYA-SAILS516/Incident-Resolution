@@ -30,14 +30,15 @@ export function Dashboard({ data, onIngest, ingesting, onOpen, onShowList }: {
             <h2>Command Center</h2>
             <p className="muted">
               What needs attention now, and what is the AI doing about it?{" "}
+              {data.application?.scanned ? <strong>{data.application.name} · observed with OpenTelemetry. </strong> : "No application scanned yet. "}
               {ingest
-                ? <>{total} active incidents from {ingest.parsed_lines.toLocaleString()} log lines ({ingest.sources.join(", ")}),
-                    last processed {new Date(ingest.ingested_at).toLocaleString()}.</>
-                : "No logs processed yet."}
+                ? <>{total} active incidents from {ingest.parsed_lines.toLocaleString()} telemetry events,
+                    last read {new Date(ingest.ingested_at).toLocaleString()}.</>
+                : "No telemetry read yet."}
             </p>
           </div>
           <button type="button" className="primary big" onClick={onIngest} disabled={ingesting}>
-            {ingesting ? "Processing…" : "Process Logs"}
+            {ingesting ? "Reading…" : "Read Telemetry"}
           </button>
         </div>
       </section>
@@ -49,9 +50,9 @@ export function Dashboard({ data, onIngest, ingesting, onOpen, onShowList }: {
                       onClick={() => onShowList({ status: "recommendations_ready" })} />
         </div>
         <p className="muted small">
-          The Investigation and Recommendation agents run as a background workflow, independent of this page:
+          The Investigation and Resolution Decision agents run as a background workflow, independent of this page:
           every incident is analysed, highest priority first, whether or not anyone is viewing it.
-          Remediation, verification and closure are not part of this POC, so resolved counts and MTTR are not tracked.
+          Remediation is guarded and simulated; recovery is verified from OpenTelemetry telemetry.
         </p>
       </section>
 
@@ -61,7 +62,7 @@ export function Dashboard({ data, onIngest, ingesting, onOpen, onShowList }: {
             {total > 0 && <button type="button" className="link-button" onClick={() => onShowList()}>View all {total}</button>}
           </div>
           {data.top_incidents.length === 0
-            ? <p className="muted">Click <strong>Process Logs</strong> to read the log files in data/logs and detect incidents.</p>
+            ? <p className="muted">{data.application?.scanned ? <>No active incidents. Click <strong>Read Telemetry</strong> to read the application&apos;s OpenTelemetry logs and detect incidents.</> : <>Scan the application on the <strong>Applications</strong> page first, then read its telemetry.</>}</p>
             : <IncidentTable rows={data.top_incidents} onOpen={onOpen} />}
       </section>
 
@@ -89,11 +90,11 @@ export function Dashboard({ data, onIngest, ingesting, onOpen, onShowList }: {
               <li>
                 <span className={`status-dot ${ingest ? "ok" : "bad"}`} aria-hidden />
                 <div>
-                  <div className="status-name">Logs</div>
+                  <div className="status-name">Logs · Source: OpenTelemetry</div>
                   <div className="muted small">
                     {ingest
                       ? `${ingest.sources.join(", ")} · ${ingest.failed_lines} unparsed line(s) · ${ingest.error_logs} errors, ${ingest.warning_logs} warnings · ${ingest.below_threshold_groups} small groups below threshold`
-                      : "Not processed yet"}
+                      : "Not read yet"}
                   </div>
                 </div>
               </li>
@@ -101,13 +102,13 @@ export function Dashboard({ data, onIngest, ingesting, onOpen, onShowList }: {
                 <span className="status-dot ok" aria-hidden />
                 <div>
                   <div className="status-name">Runbooks</div>
-                  <div className="muted small">Simulated runbooks in data/runbooks</div>
+                  <div className="muted small">Generic simulated runbooks (data/runbooks); none are tied to the monitored application</div>
                 </div>
               </li>
               <li>
                 <span className={`status-dot ${data.agents.llm_configured && data.agents.auto_analyze ? "ok" : "bad"}`} aria-hidden />
                 <div>
-                  <div className="status-name">Investigation & Recommendation agents (Google ADK)</div>
+                  <div className="status-name">Investigation & Resolution Decision agents (Google ADK)</div>
                   <div className="muted small">
                     {data.agents.model} · background workflow {data.agents.auto_analyze ? "on" : "off"} ·{" "}
                     {data.agents.investigated} investigated · {data.agents.recommendations_ready} with recommendations

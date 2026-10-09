@@ -1,5 +1,4 @@
-/// <reference types="vitest" />
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 // The frontend only talks to the backend API. No credentials or LLM calls live here.

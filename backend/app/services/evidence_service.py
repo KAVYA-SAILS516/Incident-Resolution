@@ -10,7 +10,10 @@ from statistics import mean
 
 from app.schemas.incident import Incident
 from app.schemas.log import LogEntry
+from app.application.knowledge import service_context
+from app.application.scenarios import relevant_failure_scenarios
 from app.state.store import JsonStore
+from app.telemetry import otel
 from app.tools.runbook_tools import load_runbook
 
 RELATED_WINDOW_PADDING = timedelta(minutes=2)
@@ -199,6 +202,23 @@ def build_evidence(incident: Incident, store: JsonStore) -> dict:
             f"Incident request latency p50 {rt['incident_requests']['p50']:g} ms vs normal p50 "
             f"{rt['service_normal_requests']['p50']:g} ms for {incident.service}."
         )
+    app_context = service_context(store.application, incident.service)
+    if app_context:
+        facts.append(
+            f"{incident.service} is a {app_context['criticality']} service of {app_context['application']}"
+            f" ({app_context['purpose']}); it depends on {', '.join(app_context['depends_on']) or 'no other service'}"
+            f" and is used by {', '.join(app_context['depended_on_by']) or 'no other service'}.")
+    for link in incident.correlated_incidents[:5]:
+        facts.append(f"Correlated: {link['service']} ({link['incident_id']}) failed in {link['shared_traces']} of the same "
+                     f"trace(s); relation to {incident.service}: {link['relation']}.")
+    related = {incident.service: "the failing service"}
+    for dep in (app_context or {}).get("depends_on", []):
+        related.setdefault(dep, f"dependency of {incident.service}")
+    for link in incident.correlated_incidents:
+        related.setdefault(link["service"], f"fails in the same traces ({link['relation']})")
+    scenarios = relevant_failure_scenarios(store.application, related)
+    traces = [t for t in (otel.fetch_trace(tid) for tid in incident.trace_ids[:2]) if t]
+    metrics = otel.service_metrics(incident.service)
     facts.append(f"Runbook for {incident.error_type}: {'available (' + runbook['runbook_id'] + ')' if runbook else 'none'}.")
 
     return {
@@ -213,10 +233,21 @@ def build_evidence(incident: Incident, store: JsonStore) -> dict:
         "baseline": baseline,
         "related_errors": related_errors,
         "representative_logs": [log_view(e) for e in reps],
+        "application_context": app_context,
+        "failure_scenarios": scenarios,
+        "correlation": {
+            "trace_ids": incident.trace_ids[:10],
+            "affected_services": incident.affected_services,
+            "correlated_incidents": incident.correlated_incidents,
+            "dependency_contexts": [c for c in (service_context(store.application, link["service"])
+                                                for link in incident.correlated_incidents[:5]) if c],
+        },
+        "telemetry": {"traces": traces, "service_metrics": metrics},
         "runbook": {"available": runbook is not None, "runbook_id": runbook["runbook_id"] if runbook else None},
         "data_limits": {
             "log_lines_in_incident": len(entries),
             "log_lines_shared_with_ai": len(reps),
-            "not_in_logs": ["infrastructure metrics", "deployment/change history", "traces", "database server logs"],
+            "not_in_logs": ["deployment/change history", "database server logs"]
+            + ([] if metrics else ["service metrics"]) + ([] if traces else ["trace spans"]),
         },
     }
